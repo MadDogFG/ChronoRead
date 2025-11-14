@@ -1,0 +1,229 @@
+﻿@page "/"
+@using ChronoRead.Models
+@using ChronoRead.Components.Shared
+@using Microsoft.JSInterop
+@inject IJSRuntime jsRuntime
+
+<div class="page-content" id="page-content">
+
+    <main>
+        <h1>项目的核心：双轨时间线</h1>
+
+        <p id="p-1">
+            “我现在越来越难专注于读书了...”
+        </p>
+
+        <p id="p-2">
+            <span class="chrono-anchor-text">这让我想起小时候看书的感觉。</span>...
+        </p>
+
+        <p id="p-3">
+            我希望 AI 能充当这个角色...
+        </p>
+
+        <p id="p-4">
+            <span class="chrono-anchor-text user">基于这个核心理念...</span>...
+        </p>
+
+        <p id="p-5">
+            <span class="chrono-anchor-text">**AI 思考流 (AI Thinking Stream)**...</span>
+        </p>
+
+        <p id="p-6">...</p>
+        <p id="p-7">...</p>
+        <p id="p-8">
+            <span class="chrono-anchor-text">另一个锚点...</span>
+        </p>
+    </main>
+
+    @foreach (var note in allNotes)
+    {
+        <TimelineCard Note="note"
+                      OnToggleExpansion="HandleCardExpansion"
+                      OnToggleVisibility="HandleCardVisibility" />
+    }
+
+    <SelectionMenu IsVisible="_isSelectionMenuVisible"
+                   Style="@_selectionMenuStyle"
+                   OnCreateNoteClick="HandleCreateNoteRequest"
+                   OnCopyClick="() => _isSelectionMenuVisible = false"
+                   OnSearchClick="() => _isSelectionMenuVisible = false" />
+
+</div>
+
+@code {
+    private List<ChronoNote> allNotes = new();
+    private bool isFirstRender = true;
+    // 用于 JS Interop 的 .NET 实例引用
+    private DotNetObjectReference<Index> dotNetHelper;
+
+    // --- 新增：划词菜单的状态 ---
+    private bool _isSelectionMenuVisible = false;
+    private string _selectionMenuStyle = "display: none;";
+    private string _selectedText = "";
+    private string _selectedAnchorId = "p-1"; // 选中文本所在的段落ID
+    private double _selectedNodeTop = 0; // *** 新增：存储节点的精确 Y 坐标 ***
+
+    protected override void OnInitialized()
+    {
+        // 在这里，您可以从数据库、API 或本地存储加载笔记
+        // 我们先使用原型中的硬编码数据
+        LoadMockData();
+        // 创建 .NET 引用，以便 JS 可以调用 C#
+        dotNetHelper = DotNetObjectReference.Create(this);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await jsRuntime.InvokeVoidAsync("ChronoReadInterop.alignAllElements");
+            await jsRuntime.InvokeVoidAsync("ChronoReadInterop.initializeSelectionListener", dotNetHelper, "page-content");
+        }
+    }
+
+    private async Task HandleCardExpansion(ChronoNote changedNote)
+    {
+        // C# 状态已更新 (changedNote.IsExpanded)
+        // 我们需要调用 JS 来处理碰撞
+        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.manageCollisions", changedNote.Id, changedNote.IsExpanded);
+        // 告诉 Blazor 刷新 UI (以防 JS 隐藏了其他卡片)
+        StateHasChanged();
+    }
+
+    private async Task HandleCardVisibility(ChronoNote changedNote)
+    {
+        // 可见性切换，不需要复杂的碰撞，只需刷新UI
+        StateHasChanged();
+    }
+    // --- 处理"创建笔记"按钮点击 (修改) ---
+    private async Task HandleCreateNoteRequest() // *** 改为 async Task ***
+    {
+        // 1. 创建 C# Note 对象
+        var newNote = new ChronoNote
+        {
+            AnchorParagraphId = _selectedAnchorId,
+            Type = NoteType.User,
+            IsVisible = true,
+            IsExpanded = true,
+            Quote = $"“...{_selectedText.Substring(0, Math.Min(_selectedText.Length, 40))}...”",
+            SummaryText = "写下你的感悟...",
+            // *** 关键：保存精确的 Y 坐标 ***
+            PreciseTop = _selectedNodeTop,
+            Messages = new()
+                {
+                    new() { Author = NoteType.User, Text = _selectedText }
+                }
+        };
+
+        // 2. 添加到主列表
+        allNotes.Add(newNote);
+
+        // 3. 隐藏菜单
+        _isSelectionMenuVisible = false;
+
+        // 4. *** 关键：调用 JS 来应用下划线 ***
+        //    我们必须在隐藏菜单 *之后*，刷新 UI *之前* 调用
+        //    因为 JS 函数需要读取 window.getSelection()，
+        //    而 StateHasChanged() 可能是异步的。
+        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.applySelectionHighlight", newNote.Id);
+
+        // 5. 告诉 Blazor 刷新 UI
+        StateHasChanged();
+
+        // 6. 重新定位所有元素 (因为新卡片加进来了)
+        //    (为了保险起见，稍作延迟，确保 Blazor 渲染完毕)
+        await Task.Delay(50); // 50ms 延迟
+        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.alignAllElements");
+    }
+
+
+    // --- JS 可以调用的 C# 方法 (修改) ---
+
+    [JSInvokable]
+    // *** 新增第五个参数 nodeTop ***
+    public void ShowSelectionMenu(string text, double menuTop, double left, string anchorId, double nodeTop)
+    {
+        _selectedText = text;
+        _selectedAnchorId = string.IsNullOrEmpty(anchorId) ? "p-1" : anchorId;
+        _selectedNodeTop = nodeTop; // *** 保存 Y 坐标 ***
+
+        _selectionMenuStyle = $"top: {menuTop}px; left: {left}px; transform: translateX(-50%);";
+        _isSelectionMenuVisible = true;
+
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public void HideSelectionMenu()
+    {
+        if (_isSelectionMenuVisible)
+        {
+            _isSelectionMenuVisible = false;
+            StateHasChanged();
+        }
+    }
+
+    private void LoadMockData()
+    {
+        allNotes = new List<ChronoNote>
+        {
+            new ChronoNote
+            {
+                Id = "node-ai-1",
+                AnchorParagraphId = "p-2",
+                Type = NoteType.Ai,
+                IsVisible = true,
+                Quote = "“...心里总能想象出画面...”",
+                SummaryText = "这种“内心对话”和“画面感”是深度阅读的关键。AI 应该放大这种体验，而不是取代它。",
+                Messages = new()
+                {
+                    new() { Author = NoteType.Ai, Text = "这种“内心对话”和“画面感”是深度阅读的关键。AI 应该放大这种体验，而不是取代它。" },
+                    new() { Author = NoteType.User, Text = "你能再详细解释一下吗？" },
+                    new() { Author = NoteType.Ai, Text = "当然，这意味着 AI 不应只是总结，而应提出开放性问题，或者提供相关的感性材料..." }
+                }
+            },
+            new ChronoNote
+            {
+                Id = "node-user-1",
+                AnchorParagraphId = "p-4",
+                Type = NoteType.User,
+                IsVisible = true,
+                Quote = "“...双轨时间线交互...”",
+                SummaryText = "这个概念是项目的核心，必须保证交互足够简单。AI 和我，是平等的对话者。",
+                Messages = new()
+                {
+                    new() { Author = NoteType.User, Text = "这个概念是项目的核心..." },
+                    new() { Author = NoteType.Ai, Text = "我同意。保持交互的简洁和平等至关重要。" }
+                }
+            },
+            // ... 添加原型中的 node-ai-2 和 node-ai-3 ...
+             new ChronoNote
+            {
+                Id = "node-ai-2",
+                AnchorParagraphId = "p-5",
+                Type = NoteType.Ai,
+                IsVisible = true,
+                Quote = "“...AI 作为‘伴读’...”",
+                SummaryText = "是的，我的角色是“伴侣”和“启发者”。我可以从不同角度提供背景，比如作者的生平、相关的哲学概念等。",
+                Messages = new()
+                {
+                    new() { Author = NoteType.Ai, Text = "是的，我的角色是“伴侣”和“启发者”。我可以从不同角度提供背景..." }
+                }
+            },
+            new ChronoNote
+            {
+                Id = "node-ai-3",
+                AnchorParagraphId = "p-8",
+                Type = NoteType.Ai,
+                IsVisible = true,
+                Quote = "“...另一个锚点，用于测试碰撞。”",
+                SummaryText = "这个节点的存在是为了确保当我们展开 p-5 节点时，这个节点会因为碰撞而被自动隐藏。",
+                Messages = new()
+                {
+                    new() { Author = NoteType.Ai, Text = "这个节点的存在是为了确保当我们展开 p-5 节点时，这个节点会因为碰撞而被自动隐藏。" }
+                }
+            }
+        };
+    }
+}

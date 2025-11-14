@@ -1,0 +1,60 @@
+﻿@using ChronoRead.Models
+@using System.Globalization
+<span class="@Note.MarkerCssClass"
+      data-controls="@Note.Id"
+      data-anchor="@Note.AnchorParagraphId"
+      data-precise-top="@(Note.PreciseTop.HasValue? Note.PreciseTop.Value.ToString(CultureInfo.InvariantCulture) : null)"
+      title="@(Note.Type == NoteType.Ai ? "AI 思考" : "我的感悟")"
+      @onclick="ToggleVisibility">
+</span>
+
+<div class="@Note.CssClass"
+     id="@Note.Id"
+     data-anchor="@Note.AnchorParagraphId"
+     data-precise-top="@(Note.PreciseTop.HasValue? Note.PreciseTop.Value.ToString(CultureInfo.InvariantCulture) : null)">
+
+    <div class="card-summary" @onclick="ToggleExpansion">
+        <blockquote>@Note.Quote</blockquote>
+        <p>@Note.SummaryText</p>
+    </div>
+
+    <div class="card-expansion">
+        <div class="chat-history">
+            @foreach (var msg in Note.Messages)
+            {
+                <div class="@msg.CssClass">@msg.Text</div>
+            }
+        </div>
+        <div class="chat-input-wrapper">
+            <div class="ask-input">
+                <input type="text" placeholder="@(Note.Type == NoteType.Ai ? "回复 AI..." : "继续思考...")">
+                <button>发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public ChronoNote Note { get; set; }
+
+    [Parameter]
+    public EventCallback<ChronoNote> OnToggleExpansion { get; set; }
+
+    [Parameter]
+    public EventCallback<ChronoNote> OnToggleVisibility { get; set; }
+
+    private async Task ToggleExpansion()
+    {
+        Note.IsExpanded = !Note.IsExpanded;
+        // 通知父组件状态已更改，以便处理碰撞
+        await OnToggleExpansion.InvokeAsync(Note);
+    }
+
+    private async Task ToggleVisibility()
+    {
+        Note.IsVisible = !Note.IsVisible;
+        // 通知父组件
+        await OnToggleVisibility.InvokeAsync(Note);
+    }
+}
