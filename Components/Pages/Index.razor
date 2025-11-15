@@ -36,9 +36,10 @@
         </p>
     </main>
 
-    @foreach (var note in allNotes)
+    @foreach (var item in allTimelineItems)
     {
-        <TimelineCard Note="note"
+        <TimelineCard Item="item"
+                      @key="item.Id"
                       OnToggleExpansion="HandleCardExpansion"
                       OnToggleVisibility="HandleCardVisibility" />
     }
@@ -53,24 +54,21 @@
 </div>
 
 @code {
-    private List<ChronoNote> allNotes = new();
+    private List<ITimelineItem> allTimelineItems = new();
     private bool isFirstRender = true;
     // 用于 JS Interop 的 .NET 实例引用
     private DotNetObjectReference<Index> dotNetHelper;
 
-    // --- 新增：划词菜单的状态 ---
+    // --- 划词菜单的状态 ---
     private bool _isSelectionMenuVisible = false;
     private string _selectionMenuStyle = "display: none;";
     private string _selectedText = "";
-    private string _selectedAnchorId = "p-1"; // 选中文本所在的段落ID
-    private double _selectedNodeTop = 0; // *** 新增：存储节点的精确 Y 坐标 ***
-    private bool _isSelectionOverlapping = false; // *** 新增：用于存储划词重叠状态 ***
+    private string _selectedAnchorId = "p-1";
+    private double _selectedVerticalPosition = 0;
+    private bool _isSelectionOverlapping = false;
 
     protected override void OnInitialized()
     {
-        // 在这里，您可以从数据库、API 或本地存储加载笔记
-        // 我们先使用原型中的硬编码数据
-        LoadMockData();
         // 创建 .NET 引用，以便 JS 可以调用 C#
         dotNetHelper = DotNetObjectReference.Create(this);
     }
@@ -79,27 +77,36 @@
     {
         if (firstRender)
         {
+            // 首先, 让 JS 计算所有段落的真实位置
+            var paragraphTops = await jsRuntime.InvokeAsync<Dictionary<string, double>>("ChronoReadInterop.getParagraphTops", "page-content");
+            // 然后, 使用这些真实位置来加载 Mock 数据
+            LoadMockData(paragraphTops);
+            StateHasChanged(); // 告诉 Blazor 有新数据了
+            // 在 Mock 数据加载 *之后* 再定位所有元素
             await jsRuntime.InvokeVoidAsync("ChronoReadInterop.alignAllElements");
+            // 初始化划词监听器
             await jsRuntime.InvokeVoidAsync("ChronoReadInterop.initializeSelectionListener", dotNetHelper, "page-content");
+            // 初始化滚轮监听器
+            await jsRuntime.InvokeVoidAsync("ChronoReadInterop.initializeWheelListener", dotNetHelper);
         }
     }
 
-    private async Task HandleCardExpansion(ChronoNote changedNote)
+    private async Task HandleCardExpansion(ITimelineItem changedItem)
     {
-        // C# 状态已更新 (changedNote.IsExpanded)
+        // C# 状态已更新 (changedItem.IsExpanded)
         // 我们需要调用 JS 来处理碰撞
-        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.manageCollisions", changedNote.Id, changedNote.IsExpanded);
+        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.manageCollisions", changedItem.Id, changedItem.IsExpanded);
         // 告诉 Blazor 刷新 UI (以防 JS 隐藏了其他卡片)
         StateHasChanged();
     }
 
-    private async Task HandleCardVisibility(ChronoNote changedNote)
+    private async Task HandleCardVisibility(ITimelineItem changedItem)
     {
         // 可见性切换，不需要复杂的碰撞，只需刷新UI
         StateHasChanged();
     }
     // --- 处理"创建笔记"按钮点击 (修改) ---
-    private async Task HandleCreateNoteRequest() // *** 改为 async Task ***
+    private async Task HandleCreateNoteRequest()
     {
         // 1. 创建 C# Note 对象
         var newNote = new ChronoNote
@@ -107,35 +114,62 @@
             AnchorParagraphId = _selectedAnchorId,
             Type = NoteType.User,
             IsVisible = true,
-            IsExpanded = true,
+            IsExpanded = true, // 创建时自动展开
             Quote = $"“...{_selectedText.Substring(0, Math.Min(_selectedText.Length, 40))}...”",
             SummaryText = "写下你的感悟...",
-            // *** 关键：保存精确的 Y 坐标 ***
-            PreciseTop = _selectedNodeTop,
+
+            // *** 修改：使用 _selectedVerticalPosition ***
+            VerticalPosition = _selectedVerticalPosition,
+
             Messages = new()
-                {
-                    new() { Author = NoteType.User, Text = _selectedText }
-                }
+            {
+                new() { Author = NoteType.User, Text = _selectedText }
+            }
         };
 
-        // 2. 添加到主列表
-        allNotes.Add(newNote);
+        // 2. *** 核心堆叠逻辑 ***
+        // 定义卡片“过近”的像素阈值
+        const double STACKING_THRESHOLD_PIXELS = 100.0;
+
+        // 查找与新笔记同侧、并且位置“过近”的 *任何* 现有项
+        var collidingItem = allTimelineItems.FirstOrDefault(item =>
+            item.Type == newNote.Type &&
+            Math.Abs(item.VerticalPosition - newNote.VerticalPosition) < STACKING_THRESHOLD_PIXELS);
+
+        if (collidingItem == null)
+        {
+            // a. 没有碰撞：直接添加新笔记
+            allTimelineItems.Add(newNote);
+        }
+        else if (collidingItem is ChronoNote collidingNote)
+        {
+            // b. 与单个笔记碰撞：创建一个新堆叠
+            var newStack = new NoteStack(collidingNote); // 用旧笔记创建堆叠
+            newStack.AddNote(newNote); // 把新笔记加入堆叠
+
+            // 从主列表移除旧笔记，并添加新堆叠
+            allTimelineItems.Remove(collidingNote);
+            allTimelineItems.Add(newStack);
+        }
+        else if (collidingItem is NoteStack collidingStack)
+        {
+            // c. 与现有堆叠碰撞：将新笔记加入该堆叠
+            collidingStack.AddNote(newNote);
+            // 确保堆叠是展开的，以显示新添加的笔记
+            collidingStack.IsExpanded = true;
+        }
 
         // 3. 隐藏菜单
         _isSelectionMenuVisible = false;
 
-        // 4. *** 关键：调用 JS 来应用下划线 ***
-        //    我们必须在隐藏菜单 *之后*，刷新 UI *之前* 调用
-        //    因为 JS 函数需要读取 window.getSelection()，
-        //    而 StateHasChanged() 可能是异步的。
+        // 4. 调用 JS 来应用下划线
         await jsRuntime.InvokeVoidAsync("ChronoReadInterop.applySelectionHighlight", newNote.Id);
 
         // 5. 告诉 Blazor 刷新 UI
         StateHasChanged();
 
-        // 6. 重新定位所有元素 (因为新卡片加进来了)
-        //    (为了保险起见，稍作延迟，确保 Blazor 渲染完毕)
-        await Task.Delay(50); // 50ms 延迟
+        // 6. 重新定位所有元素 (因为新卡片/堆叠加进来了)
+        await Task.Delay(50);
         await jsRuntime.InvokeVoidAsync("ChronoReadInterop.alignAllElements");
     }
 
@@ -143,13 +177,14 @@
     // --- JS 可以调用的 C# 方法 (修改) ---
 
     [JSInvokable]
-    // *** 修改：新增第六个参数 bool isOverlap ***
-    public void ShowSelectionMenu(string text, double menuTop, double left, string anchorId, double nodeTop, bool isOverlap)
+    // *** 修改：重命名 nodeTop 为 verticalPosition ***
+    public void ShowSelectionMenu(string text, double menuTop, double left, string anchorId, double verticalPosition, bool isOverlap)
     {
         _selectedText = text;
         _selectedAnchorId = string.IsNullOrEmpty(anchorId) ? "p-1" : anchorId;
-        _selectedNodeTop = nodeTop;
-        // *** 新增：保存重叠状态 ***
+
+        // *** 修改：保存 Y 坐标 ***
+        _selectedVerticalPosition = verticalPosition;
         _isSelectionOverlapping = isOverlap;
 
         _selectionMenuStyle = $"top: {menuTop}px; left: {left}px; transform: translateX(-50%);";
@@ -168,9 +203,33 @@
         }
     }
 
-    private void LoadMockData()
+    // *** 新增：JS 可调用的滚轮处理方法 ***
+    [JSInvokable]
+    public void HandleStackWheel(string itemId, double deltaY)
     {
-        allNotes = new List<ChronoNote>
+        // 1. 查找对应的堆叠项
+        var item = allTimelineItems.FirstOrDefault(i => i.Id == itemId);
+
+        if (item is NoteStack stack)
+        {
+            // 2. 调用我们已有的 C# 循环逻辑
+            stack.CycleNoteToTop(cycleForward: deltaY > 0);
+
+            // 3. 异步刷新UI (必须用 InvokeAsync)
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void LoadMockData(Dictionary<string, double> paragraphTops)
+    {
+        // 确保 paragraphTops 包含我们需要的数据, 如果没有则提供一个默认值
+        double p2Top = paragraphTops.GetValueOrDefault("p-2", 300);
+        double p4Top = paragraphTops.GetValueOrDefault("p-4", 500);
+        double p5Top = paragraphTops.GetValueOrDefault("p-5", 600);
+        double p8Top = paragraphTops.GetValueOrDefault("p-8", 700);
+
+        // 现在填充 ITimelineItem 列表
+        allTimelineItems = new List<ITimelineItem>
         {
             new ChronoNote
             {
@@ -180,6 +239,7 @@
                 IsVisible = true,
                 Quote = "“...心里总能想象出画面...”",
                 SummaryText = "这种“内心对话”和“画面感”是深度阅读的关键。AI 应该放大这种体验，而不是取代它。",
+                VerticalPosition = p2Top, // 假设一个Y坐标
                 Messages = new()
                 {
                     new() { Author = NoteType.Ai, Text = "这种“内心对话”和“画面感”是深度阅读的关键。AI 应该放大这种体验，而不是取代它。" },
@@ -195,19 +255,21 @@
                 IsVisible = true,
                 Quote = "“...双轨时间线交互...”",
                 SummaryText = "这个概念是项目的核心，必须保证交互足够简单。AI 和我，是平等的对话者。",
+                VerticalPosition = p4Top, // 假设一个Y坐标
                 Messages = new()
                 {
                     new() { Author = NoteType.User, Text = "这个概念是项目的核心..." },
                     new() { Author = NoteType.Ai, Text = "我同意。保持交互的简洁和平等至关重要。" }
                 }
             },
-            // ... 添加原型中的 node-ai-2 和 node-ai-3 ...
-             new ChronoNote
+            // ... (其他 mock 数据也需要像这样添加 VerticalPosition) ...
+            new ChronoNote
             {
                 Id = "node-ai-2",
                 AnchorParagraphId = "p-5",
                 Type = NoteType.Ai,
                 IsVisible = true,
+                VerticalPosition = p5Top,
                 Quote = "“...AI 作为‘伴读’...”",
                 SummaryText = "是的，我的角色是“伴侣”和“启发者”。我可以从不同角度提供背景，比如作者的生平、相关的哲学概念等。",
                 Messages = new()
@@ -221,6 +283,7 @@
                 AnchorParagraphId = "p-8",
                 Type = NoteType.Ai,
                 IsVisible = true,
+                VerticalPosition = p8Top,
                 Quote = "“...另一个锚点，用于测试碰撞。”",
                 SummaryText = "这个节点的存在是为了确保当我们展开 p-5 节点时，这个节点会因为碰撞而被自动隐藏。",
                 Messages = new()
@@ -229,5 +292,54 @@
                 }
             }
         };
+        // --- *** 新增：在这里自动堆叠 Mock 数据 *** ---
+        // 我们需要手动运行一次堆叠逻辑，就像 HandleCreateNoteRequest 中那样
+
+        const double STACKING_THRESHOLD_PIXELS = 100.0;
+        var itemsToStack = allTimelineItems
+            .OfType<ChronoNote>() // 只获取单个笔记
+            .OrderBy(n => n.VerticalPosition) // 按位置排序
+            .ToList();
+
+        var stackedItems = new List<ITimelineItem>();
+        var stacks = new Dictionary<string, NoteStack>();
+
+        foreach (var note in itemsToStack)
+        {
+            // 查找是否已存在一个"过近"的、同类型的堆叠
+            var nearbyStack = stacks.Values.FirstOrDefault(s =>
+                s.Type == note.Type &&
+                Math.Abs(s.VerticalPosition - note.VerticalPosition) < STACKING_THRESHOLD_PIXELS);
+
+            if (nearbyStack != null)
+            {
+                // 找到了，加入现有堆叠
+                nearbyStack.AddNote(note);
+            }
+            else
+            {
+                // 没找到，创建一个新堆叠
+                var newStack = new NoteStack(note);
+                stacks.Add(newStack.Id, newStack); // 注册这个新堆叠
+                stackedItems.Add(newStack); // 添加到最终列表
+            }
+        }
+
+        // 最后，处理那些没有被堆叠的笔记 (如果 NoteStack 只包含一个笔记)
+        var finalItems = new List<ITimelineItem>();
+        foreach (var item in stackedItems)
+        {
+            if (item is NoteStack stack && stack.Notes.Count == 1)
+            {
+                finalItems.Add(stack.Notes.First()); // 如果堆叠里只有1个，就把它“解开”
+            }
+            else
+            {
+                finalItems.Add(item); // 否则，添加整个堆叠
+            }
+        }
+
+        allTimelineItems = finalItems; // 替换主列表
+    
     }
 }

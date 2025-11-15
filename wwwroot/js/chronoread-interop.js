@@ -1,6 +1,5 @@
 ﻿window.ChronoReadInterop = {
 
-    // *** 新增：用于暂存最后一次划词的 Range 对象 ***
     _lastSelectionRange: null,
 
     /**
@@ -8,19 +7,10 @@
      */
     alignAllElements: () => {
         try {
-            const elements = document.querySelectorAll('[data-anchor]');
+            const elements = document.querySelectorAll('[data-precise-top]');
             elements.forEach(el => {
                 if (el.dataset.preciseTop) {
                     el.style.top = `${parseFloat(el.dataset.preciseTop)}px`;
-                }
-                else {
-                    const anchorId = el.dataset.anchor;
-                    const anchorElement = document.getElementById(anchorId);
-                    if (anchorElement) {
-                        const topPosition = anchorElement.offsetTop;
-                        const offset = el.classList.contains('node-marker') ? 8 : 0;
-                        el.style.top = `${topPosition + offset}px`;
-                    }
                 }
             });
         } catch (e) {
@@ -29,10 +19,9 @@
     },
 
     /**
-     * 2. 处理碰撞
+     * 2. 处理碰撞 (原版，未修改)
      */
     manageCollisions: (expandingCardId, isExpanding) => {
-        // ... (此函数保持不变)
         const card = document.getElementById(expandingCardId);
         if (!card) return;
         if (isExpanding) {
@@ -71,14 +60,13 @@
     },
 
     /**
-     * 3. 初始化划词监听器 (修改版 - 传递重叠状态)
+     * 3. 初始化划词监听器 (*** 关键修复 ***)
      */
     initializeSelectionListener: (dotNetHelper, contentContainerId) => {
         const content = document.getElementById(contentContainerId);
         if (!content) { console.error("Selection listener: content container not found."); return; }
 
         content.addEventListener('mouseup', (e) => {
-            // 如果点击的是卡片或菜单，则忽略
             if (e.target.closest('.timeline-card') || e.target.closest('#selection-menu')) {
                 return;
             }
@@ -88,26 +76,26 @@
             if (selectedText.length > 3) {
                 const range = selection.getRangeAt(0);
 
-                // --- 新增：重叠检查 ---
-                let isOverlap = false; // 默认不重叠
+                let isOverlap = false;
                 const existingHighlights = content.querySelectorAll('.chrono-anchor-text');
                 for (let span of existingHighlights) {
                     if (range.intersectsNode(span)) {
-                        isOverlap = true; // 发现重叠，设置标志
-                        break; // 停止检查
+                        isOverlap = true;
+                        break;
                     }
                 }
-                // --- 重叠检查结束 ---
 
-                // *** 关键：立即暂存 Range 对象 ***
                 window.ChronoReadInterop._lastSelectionRange = range;
 
                 const rect = range.getBoundingClientRect();
                 const contentRect = content.getBoundingClientRect();
-                // 菜单向上偏移 50px
-                const menuTop = (rect.top - contentRect.top) + window.scrollY - 50;
-                // 锚点/卡片的精确 Y 坐标
-                const nodeTop = (rect.top - contentRect.top) + window.scrollY + 4;
+
+                // *** 关键修复：使用 document.documentElement.scrollTop ***
+                const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+                const lineCenter = rect.top + (rect.height / 2);
+
+                const menuTop = (rect.top - contentRect.top) + scrollTop - 50;
+                const verticalPosition = (lineCenter - contentRect.top) + scrollTop - 5;
                 const relativeLeft = (rect.left - contentRect.left) + window.scrollX + (rect.width / 2);
 
                 dotNetHelper.invokeMethodAsync(
@@ -116,20 +104,17 @@
                     menuTop,
                     relativeLeft,
                     range.startContainer.parentElement.id,
-                    nodeTop,
-                    isOverlap // *** 关键：将重叠状态作为第6个参数传递给 C# ***
+                    verticalPosition,
+                    isOverlap
                 );
             } else {
-                // *** 关键：清除暂存的 Range ***
                 window.ChronoReadInterop._lastSelectionRange = null;
                 dotNetHelper.invokeMethodAsync('HideSelectionMenu');
             }
         });
 
         document.addEventListener('mousedown', (e) => {
-            // 如果点击的是内容区域或菜单之外的地方
             if (!content.contains(e.target) && !e.target.closest('#selection-menu')) {
-                // *** 关键：点击其他地方也清除暂存的 Range ***
                 window.ChronoReadInterop._lastSelectionRange = null;
                 dotNetHelper.invokeMethodAsync('HideSelectionMenu');
             }
@@ -137,11 +122,9 @@
     },
 
     /**
-     * 4. 应用绿色下划线 (修改版)
+     * 4. 应用绿色下划线 (原版，未修改)
      */
     applySelectionHighlight: (noteId) => {
-
-        // *** 关键：不再调用 getSelection()，而是使用暂存的 Range ***
         if (!window.ChronoReadInterop._lastSelectionRange) {
             console.error("ApplyHighlight: No selection range was saved.");
             return;
@@ -154,19 +137,64 @@
             span.className = 'chrono-anchor-text user';
             span.dataset.noteId = noteId;
 
-            // *** 使用暂存的 Range 包裹内容 ***
             range.surroundContents(span);
 
-            // *** 关键：清除暂存的 Range，防止重复使用 ***
             window.ChronoReadInterop._lastSelectionRange = null;
-
-            // 清除浏览器视觉上的划词高亮
             window.getSelection().removeAllRanges();
 
         } catch (e) {
             console.error("Error applying highlight:", e);
-            // 发生错误时也清除
             window.ChronoReadInterop._lastSelectionRange = null;
         }
+    }, // *** <-- 这里有一个关键的逗号 ***
+
+    /**
+     * 5. 获取所有段落的顶部位置
+     */
+    getParagraphTops: (contentContainerId) => {
+
+        const content = document.getElementById(contentContainerId);
+        if (!content) {
+            return {};
+        }
+
+        const tops = {};
+        const paragraphs = content.querySelectorAll('main p[id]');
+
+
+        const contentRect = content.getBoundingClientRect();
+
+        const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+        const windowScrollY = window.scrollY;
+
+        paragraphs.forEach(p => {
+            const rect = p.getBoundingClientRect();
+            const lineCenter = rect.top + (rect.height / 2);
+            const pTop = (lineCenter - contentRect.top) + scrollTop - 5;
+            tops[p.id] = pTop;
+
+        });
+
+
+        return tops;
+    },
+
+    /**
+     * 6. 新增：初始化滚轮监听器 (用于堆叠切换)
+     */
+    initializeWheelListener: (dotNetHelper) => {
+        document.addEventListener('wheel', (e) => {
+            const stackCard = e.target.closest('.timeline-card.is-stack');
+
+            if (stackCard) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const itemId = stackCard.id;
+                const deltaY = e.deltaY;
+
+                dotNetHelper.invokeMethodAsync('HandleStackWheel', itemId, deltaY);
+            }
+        }, { passive: false, capture: true });
     }
 };

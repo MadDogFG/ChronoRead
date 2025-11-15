@@ -76,6 +76,28 @@
         /* 绿色光环 */
         box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.3);
     }
+    /* 堆叠的锚点样式 */
+    .node-marker.is-stack {
+        box-shadow: 0 0 0 4px white, 0 0 0 6px #3b82f6;
+        /* 关键：设置背景色 和 白色文本 */
+        background-color: #3b82f6; /* 蓝色背景 */
+        color: white; /* 白色数字 */
+        /* 文本居中 */
+        font-size: 0.75rem;
+        font-weight: 600;
+        line-height: 1.15rem; /* 调整此值使数字垂直居中 */
+        text-align: center;
+        /* 确保圆圈大小不变 */
+        width: 1.15rem;
+        height: 1.15rem;
+    }
+
+        .node-marker.is-stack.user {
+            box-shadow: 0 0 0 4px white, 0 0 0 6px #16a34a;
+            /* User 侧的颜色 */
+            background-color: #16a34a; /* 绿色背景 */
+            color: white; /* 白色数字 */
+        }
 
 /* 3. 双轨时间线卡片 (左右伴随) */
 .timeline-card {
@@ -125,6 +147,29 @@
         .timeline-card.user.visible:hover {
             transform: translateX(calc(100% + 2.5rem)) translateY(-2px);
             box-shadow: 0 8px 15px rgba(0,0,0,0.05);
+        }
+    /* 新增：堆叠卡片的视觉提示 */
+    .timeline-card.is-stack {
+        /* 添加一个厚边框来表示 "堆叠" */
+        border-width: 3px;
+    }
+
+        .timeline-card.is-stack::after {
+            content: '';
+            position: absolute;
+            left: 3px;
+            right: 3px;
+            bottom: -5px;
+            height: 8px;
+            background: white;
+            border: 3px solid #dbeafe; /* 匹配 AI 边框 */
+            border-top: none;
+            border-radius: 0 0 0.75rem 0.75rem;
+            opacity: 0.7;
+        }
+
+        .timeline-card.is-stack.user::after {
+            border-color: #dcfce7; /* 匹配 User 边框 */
         }
 
 /* 卡片摘要 (可点击) */
@@ -287,3 +332,17 @@
         width: 1rem;
         height: 1rem;
     }
+/* 6. 堆叠提示 */
+.stack-scroll-hint {
+    font-size: 0.75rem; /* 12px */
+    color: #9ca3af; /* gray-400 */
+    text-align: center;
+    padding: 0 0.75rem 0.75rem;
+    border-top: 1px solid #f3f4f6; /* gray-100 */
+    margin-top: -0.75rem; /* 抵消展开区的 padding */
+    user-select: none;
+}
+
+.timeline-card.expanded .stack-scroll-hint {
+    border-top: none; /* 展开时不需要上边框 */
+}
