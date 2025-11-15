@@ -44,8 +44,14 @@
         // 重新计算中心点 (您逻辑中的"垂直中心附近")
         public void RecalculateVerticalCenter()
         {
-            // 使用所有笔记 *最初* 的划词位置 (VerticalPosition) 的平均值
-            VerticalPosition = Notes.Average(n => n.VerticalPosition);
+            if (Notes.Count == 0) return;
+
+            // 找到 Y 坐标的最小值和最大值
+            var minTop = Notes.Min(n => n.VerticalPosition);
+            var maxTop = Notes.Max(n => n.VerticalPosition);
+
+            // 将堆叠的中心点设为 "最顶" 和 "最底" 的平均值
+            VerticalPosition = (minTop + maxTop) / 2;
         }
 
         // 响应鼠标滚轮

@@ -34,70 +34,52 @@
     }
 
 
-/* 2. 原文标记 (小圆点) */
+/* 2. 原文标记 (新版：统一) */
 .node-marker {
     position: absolute;
-    width: 0.75rem; /* 12px - 改小为实心圆点 */
-    height: 0.75rem; /* 12px - 改小为实心圆点 */
-    border-radius: 50%;
-    /* border: 3px solid white; - 移除边框 */
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
     cursor: pointer;
     z-index: 20;
-    transition: all 0.2s;
-    /* 由 JS 设定 top */
-    /* 关键：定位到左侧空白边缘 (padding区) */
-    left: 1.75rem;
-    /* transform: translateX(-3.5rem); - 移除 */
+    left: 1.75rem; /* AI 侧 (默认) */
+    border-radius: 50%;
+    /* --- 结合了方案1和方案2 --- */
+    /* 方案1: 统一的数字+背景样式 */
+    box-shadow: 0 0 0 4px white, 0 0 0 6px #3b82f6;
+    background-color: #3b82f6 !important; /* 蓝色背景 */
+    color: white !important; /* 白色数字 */
+    font-size: 0.75rem;
+    font-weight: 600;
+    width: 1.2rem;
+    height: 1.2rem;
+    line-height: 1.2rem;
+    text-align: center;
+    /* 方案2: 垂直居中 (来自 JS 的 verticalPosition) */
+    transform: translateY(-50%);
+    transition: transform 0.2s; /* 只过渡 transform */
 }
 
     .node-marker:hover {
-        /* transform: translateX(-3.5rem) scale(1.2); - 移除 */
-        transform: scale(1.2); /* 简单的缩放效果 */
+        /* 结合了居中 和 缩放 */
+        transform: translateY(-50%) scale(1.2);
     }
 
-    .node-marker.ai {
-        background-color: #3b82f6;
-    }
-
-    /* 关键：用户圆点定位到右侧 */
     .node-marker.user {
-        background-color: #16a34a;
-        left: auto; /* 覆盖 ai 的 left */
-        right: 1.75rem; /* 定位到右侧空白边缘 (padding区) */
+        /* User 侧的颜色和位置 */
+        left: auto;
+        right: 1.75rem;
+        box-shadow: 0 0 0 4px white, 0 0 0 6px #16a34a;
+        background-color: #16a34a !important; /* 绿色背景 */
+        color: white !important; /* 白色数字 */
     }
 
+    /* 激活状态的边框 (原版) */
     .node-marker.active {
-        /* 激活状态的边框 - 简化为光环 */
-        box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.3); /* 蓝色光环 */
+        /* 覆盖 box-shadow */
+        box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.3);
     }
 
     .node-marker.user.active {
-        /* 绿色光环 */
         box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.3);
     }
-    /* 堆叠的锚点样式 */
-    .node-marker.is-stack {
-        box-shadow: 0 0 0 4px white, 0 0 0 6px #3b82f6;
-        /* 关键：设置背景色 和 白色文本 */
-        background-color: #3b82f6; /* 蓝色背景 */
-        color: white; /* 白色数字 */
-        /* 文本居中 */
-        font-size: 0.75rem;
-        font-weight: 600;
-        line-height: 1.15rem; /* 调整此值使数字垂直居中 */
-        text-align: center;
-        /* 确保圆圈大小不变 */
-        width: 1.15rem;
-        height: 1.15rem;
-    }
-
-        .node-marker.is-stack.user {
-            box-shadow: 0 0 0 4px white, 0 0 0 6px #16a34a;
-            /* User 侧的颜色 */
-            background-color: #16a34a; /* 绿色背景 */
-            color: white; /* 白色数字 */
-        }
 
 /* 3. 双轨时间线卡片 (左右伴随) */
 .timeline-card {

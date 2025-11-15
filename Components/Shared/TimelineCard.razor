@@ -25,9 +25,13 @@
           title="@(Item.Type == NoteType.Ai ? "AI 思考" : "我的感悟")"
           @onclick="ToggleVisibility">
 
-        @if (stack != null && stack.Notes.Count > 1)
+        @if (stack != null)
         {
             @stack.Notes.Count
+        }
+        else
+        {
+            <span>1</span>
         }
     </span>
 
@@ -87,7 +91,4 @@
         Item.IsVisible = !Item.IsVisible;
         await OnToggleVisibility.InvokeAsync(Item);
     }
-
-    // (已移除 HandleWheelScroll, 因为 C# 的 HandleStackWheel
-    // 在 Index.razor 中统一处理了)
 }

@@ -19,32 +19,41 @@
     },
 
     /**
-     * 2. 处理碰撞 (原版，未修改)
+     * 2. 处理碰撞 (*** 修改版：返回受影响的 ID 列表 ***)
      */
     manageCollisions: (expandingCardId, isExpanding) => {
         const card = document.getElementById(expandingCardId);
-        if (!card) return;
+        if (!card) return []; // 返回空数组
+
         if (isExpanding) {
             const myTop = card.offsetTop;
-            const myExpandedHeight = card.querySelector('.card-summary').offsetHeight + 350;
+            // *** 修改：从 350px 增加到 400px 以确保覆盖 ***
+            const myExpandedHeight = card.querySelector('.card-summary').offsetHeight + 400;
             const myBottom = myTop + myExpandedHeight;
             const allVisibleCards = document.querySelectorAll('.timeline-card.visible');
-            let hiddenCards = [];
+            let hiddenCards = []; // 存储将被隐藏的 ID
+
             allVisibleCards.forEach(otherCard => {
                 if (otherCard === card) return;
                 const isSameSide = (card.classList.contains('ai') && otherCard.classList.contains('ai')) ||
                     (card.classList.contains('user') && otherCard.classList.contains('user'));
                 if (!isSameSide) return;
+
                 const otherTop = otherCard.offsetTop;
+                // 检查：如果 otherCard 的顶部在 expandingCard 的区域内
                 if (otherTop > myTop && otherTop < myBottom) {
                     otherCard.classList.add('hidden-by-expansion');
-                    hiddenCards.push(otherCard.id);
+                    hiddenCards.push(otherCard.id); // 添加 ID
                 }
             });
+
             if (hiddenCards.length > 0) {
                 card.dataset.hiddenCardIds = JSON.stringify(hiddenCards);
             }
-        } else {
+            return hiddenCards; // *** 返回被隐藏的 ID 列表 ***
+        }
+        else {
+            // 正在收起
             const hiddenIdsJson = card.dataset.hiddenCardIds;
             if (hiddenIdsJson) {
                 const hiddenIds = JSON.parse(hiddenIdsJson);
@@ -55,7 +64,9 @@
                     }
                 });
                 delete card.dataset.hiddenCardIds;
+                return hiddenIds; // *** 返回被恢复的 ID 列表 ***
             }
+            return []; // 没有卡片被恢复
         }
     },
 
@@ -90,12 +101,10 @@
                 const rect = range.getBoundingClientRect();
                 const contentRect = content.getBoundingClientRect();
 
-                // *** 关键修复：使用 document.documentElement.scrollTop ***
-                const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
                 const lineCenter = rect.top + (rect.height / 2);
 
-                const menuTop = (rect.top - contentRect.top) + scrollTop - 50;
-                const verticalPosition = (lineCenter - contentRect.top) + scrollTop - 5;
+                const menuTop = (rect.top - contentRect.top) - 50;
+                const verticalPosition = (lineCenter - contentRect.top) - 5;
                 const relativeLeft = (rect.left - contentRect.left) + window.scrollX + (rect.width / 2);
 
                 dotNetHelper.invokeMethodAsync(
@@ -160,17 +169,12 @@
 
         const tops = {};
         const paragraphs = content.querySelectorAll('main p[id]');
-
-
         const contentRect = content.getBoundingClientRect();
-
-        const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-        const windowScrollY = window.scrollY;
 
         paragraphs.forEach(p => {
             const rect = p.getBoundingClientRect();
             const lineCenter = rect.top + (rect.height / 2);
-            const pTop = (lineCenter - contentRect.top) + scrollTop - 5;
+            const pTop = (lineCenter - contentRect.top) - 5;
             tops[p.id] = pTop;
 
         });

@@ -34,6 +34,10 @@
         <p id="p-8">
             <span class="chrono-anchor-text">另一个锚点...</span>
         </p>
+        <p id="p-9">测试测试测试测试测试测试测试测试测试测试测试</p>
+        <p id="p-10">测试测试测试测试测试测试测试测试测试测试测试</p>
+        <p id="p-11">测试测试测试测试测试测试测试测试测试测试测试</p>
+        <p id="p-12">测试测试测试测试测试测试测试测试测试测试测试</p>
     </main>
 
     @foreach (var item in allTimelineItems)
@@ -93,10 +97,24 @@
 
     private async Task HandleCardExpansion(ITimelineItem changedItem)
     {
-        // C# 状态已更新 (changedItem.IsExpanded)
-        // 我们需要调用 JS 来处理碰撞
-        await jsRuntime.InvokeVoidAsync("ChronoReadInterop.manageCollisions", changedItem.Id, changedItem.IsExpanded);
-        // 告诉 Blazor 刷新 UI (以防 JS 隐藏了其他卡片)
+        // *** 修改：调用 JS 并接收返回的 ID 数组 ***
+        var affectedIds = await jsRuntime.InvokeAsync<string[]>("ChronoReadInterop.manageCollisions", changedItem.Id, changedItem.IsExpanded);
+
+        // 如果我们正在收起 (IsExpanded = false)，那么被影响的卡片应该恢复可见
+        // 如果我们正在展开 (IsExpanded = true)，那么被影响的卡片应该设为不可见
+        bool shouldBeVisible = !changedItem.IsExpanded;
+
+        // *** 新增：同步 C# 状态 ***
+        foreach (var id in affectedIds)
+        {
+            var item = allTimelineItems.FirstOrDefault(i => i.Id == id);
+            if (item != null)
+            {
+                item.IsVisible = shouldBeVisible; // 修复 Bug 1 和 2
+            }
+        }
+
+        // 刷新 UI
         StateHasChanged();
     }
 
@@ -105,72 +123,134 @@
         // 可见性切换，不需要复杂的碰撞，只需刷新UI
         StateHasChanged();
     }
-    // --- 处理"创建笔记"按钮点击 (修改) ---
+    // --- 核心修改：处理"创建笔记"按钮点击 (修复自动收起/展开的 bug) ---
     private async Task HandleCreateNoteRequest()
     {
-        // 1. 创建 C# Note 对象
+        // --- 0. *** 修复 BUG 2: 收起任何其他已展开的卡片 *** ---
+        var currentlyExpandedItem = allTimelineItems.FirstOrDefault(i => i.IsExpanded);
+        if (currentlyExpandedItem != null)
+        {
+            currentlyExpandedItem.IsExpanded = false;
+            // *** 修改：调用 JS 并接收返回的 ID 数组 ***
+            var restoredIds = await jsRuntime.InvokeAsync<string[]>("ChronoReadInterop.manageCollisions", currentlyExpandedItem.Id, false);
+            // *** 新增：同步 C# 状态 ***
+            foreach (var id in restoredIds)
+            {
+                var item = allTimelineItems.FirstOrDefault(i => i.Id == id);
+                if (item != null) item.IsVisible = true; // 恢复可见性
+            }
+        }
+
+        // 1. 创建 C# Note 对象 (不变)
         var newNote = new ChronoNote
         {
             AnchorParagraphId = _selectedAnchorId,
             Type = NoteType.User,
             IsVisible = true,
-            IsExpanded = true, // 创建时自动展开
+            IsExpanded = true, // 新卡片默认展开
             Quote = $"“...{_selectedText.Substring(0, Math.Min(_selectedText.Length, 40))}...”",
             SummaryText = "写下你的感悟...",
-
-            // *** 修改：使用 _selectedVerticalPosition ***
             VerticalPosition = _selectedVerticalPosition,
-
             Messages = new()
             {
                 new() { Author = NoteType.User, Text = _selectedText }
             }
         };
 
-        // 2. *** 核心堆叠逻辑 ***
-        // 定义卡片“过近”的像素阈值
+        // --- 修复 BUG 1: 我们需要跟踪最终被添加到列表中的项 ---
+        ITimelineItem itemToExpand = null;
+
+        // 2. 核心堆叠逻辑 (带优先级 - 不变)
         const double STACKING_THRESHOLD_PIXELS = 100.0;
 
-        // 查找与新笔记同侧、并且位置“过近”的 *任何* 现有项
-        var collidingItem = allTimelineItems.FirstOrDefault(item =>
-            item.Type == newNote.Type &&
-            Math.Abs(item.VerticalPosition - newNote.VerticalPosition) < STACKING_THRESHOLD_PIXELS);
+        var nearbyStacks = allTimelineItems
+            .OfType<NoteStack>()
+            .Where(stack =>
+                stack.Type == newNote.Type &&
+                Math.Abs(stack.VerticalPosition - newNote.VerticalPosition) < STACKING_THRESHOLD_PIXELS)
+            .ToList();
 
-        if (collidingItem == null)
+        if (nearbyStacks.Count > 0)
         {
-            // a. 没有碰撞：直接添加新笔记
-            allTimelineItems.Add(newNote);
-        }
-        else if (collidingItem is ChronoNote collidingNote)
-        {
-            // b. 与单个笔记碰撞：创建一个新堆叠
-            var newStack = new NoteStack(collidingNote); // 用旧笔记创建堆叠
-            newStack.AddNote(newNote); // 把新笔记加入堆叠
+            // A. 找到了一个或多个堆叠：合并所有
+            var notesToMerge = new List<ChronoNote> { newNote };
+            foreach (var stack in nearbyStacks)
+            {
+                allTimelineItems.Remove(stack);
+                notesToMerge.AddRange(stack.Notes);
+            }
+            var mergedStack = new NoteStack(notesToMerge.First());
+            foreach (var note in notesToMerge.Skip(1))
+            {
+                mergedStack.AddNote(note);
+            }
 
-            // 从主列表移除旧笔记，并添加新堆叠
-            allTimelineItems.Remove(collidingNote);
-            allTimelineItems.Add(newStack);
+            mergedStack.IsExpanded = true;
+            allTimelineItems.Add(mergedStack);
+            itemToExpand = mergedStack; // *** 跟踪这个新堆叠 ***
         }
-        else if (collidingItem is NoteStack collidingStack)
+        else
         {
-            // c. 与现有堆叠碰撞：将新笔记加入该堆叠
-            collidingStack.AddNote(newNote);
-            // 确保堆叠是展开的，以显示新添加的笔记
-            collidingStack.IsExpanded = true;
+            var nearbyNotes = allTimelineItems
+                .OfType<ChronoNote>()
+                .Where(note =>
+                    note.Type == newNote.Type &&
+                    Math.Abs(note.VerticalPosition - newNote.VerticalPosition) < STACKING_THRESHOLD_PIXELS)
+                .ToList();
+
+            if (nearbyNotes.Count > 0)
+            {
+                // B. 找到了一个或多个单个笔记：合并它们
+                var notesToMerge = new List<ChronoNote> { newNote };
+                notesToMerge.AddRange(nearbyNotes);
+                foreach (var note in nearbyNotes)
+                {
+                    allTimelineItems.Remove(note);
+                }
+                var newStack = new NoteStack(notesToMerge.First());
+                foreach (var note in notesToMerge.Skip(1))
+                {
+                    newStack.AddNote(note);
+                }
+
+                newStack.IsExpanded = true;
+                allTimelineItems.Add(newStack);
+                itemToExpand = newStack; // *** 跟踪这个新堆叠 ***
+            }
+            else
+            {
+                // C. 附近什么都没有：它是一个独立的笔记
+                allTimelineItems.Add(newNote);
+                itemToExpand = newNote; // *** 跟踪这个新笔记 ***
+            }
         }
 
-        // 3. 隐藏菜单
+        // 3. 隐藏菜单 (不变)
         _isSelectionMenuVisible = false;
 
-        // 4. 调用 JS 来应用下划线
+        // 4. 调用 JS 来应用下划线 (不变)
         await jsRuntime.InvokeVoidAsync("ChronoReadInterop.applySelectionHighlight", newNote.Id);
 
-        // 5. 告诉 Blazor 刷新 UI
+        // 5. 告诉 Blazor 刷新 UI (不变)
         StateHasChanged();
 
-        // 6. 重新定位所有元素 (因为新卡片/堆叠加进来了)
+        // 6. 重新定位所有元素 (不变)
         await Task.Delay(50);
         await jsRuntime.InvokeVoidAsync("ChronoReadInterop.alignAllElements");
+
+        // --- 7. *** 修改：展开新卡片并同步状态 *** ---
+        if (itemToExpand != null && itemToExpand.IsExpanded)
+        {
+            // *** 修改：调用 JS 并接收返回的 ID 数组 ***
+            var hiddenIds = await jsRuntime.InvokeAsync<string[]>("ChronoReadInterop.manageCollisions", itemToExpand.Id, true);
+
+            // *** 新增：同步 C# 状态 ***
+            foreach (var id in hiddenIds)
+            {
+                var item = allTimelineItems.FirstOrDefault(i => i.Id == id);
+                if (item != null) item.IsVisible = false; // 设为不可见 (修复 Bug 1)
+            }
+        }
     }
 
 
