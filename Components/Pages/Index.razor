@@ -47,7 +47,8 @@
                    Style="@_selectionMenuStyle"
                    OnCreateNoteClick="HandleCreateNoteRequest"
                    OnCopyClick="() => _isSelectionMenuVisible = false"
-                   OnSearchClick="() => _isSelectionMenuVisible = false" />
+                   OnSearchClick="() => _isSelectionMenuVisible = false"
+                   IsCreateNoteDisabled="_isSelectionOverlapping" />
 
 </div>
 
@@ -63,6 +64,7 @@
     private string _selectedText = "";
     private string _selectedAnchorId = "p-1"; // 选中文本所在的段落ID
     private double _selectedNodeTop = 0; // *** 新增：存储节点的精确 Y 坐标 ***
+    private bool _isSelectionOverlapping = false; // *** 新增：用于存储划词重叠状态 ***
 
     protected override void OnInitialized()
     {
@@ -141,12 +143,14 @@
     // --- JS 可以调用的 C# 方法 (修改) ---
 
     [JSInvokable]
-    // *** 新增第五个参数 nodeTop ***
-    public void ShowSelectionMenu(string text, double menuTop, double left, string anchorId, double nodeTop)
+    // *** 修改：新增第六个参数 bool isOverlap ***
+    public void ShowSelectionMenu(string text, double menuTop, double left, string anchorId, double nodeTop, bool isOverlap)
     {
         _selectedText = text;
         _selectedAnchorId = string.IsNullOrEmpty(anchorId) ? "p-1" : anchorId;
-        _selectedNodeTop = nodeTop; // *** 保存 Y 坐标 ***
+        _selectedNodeTop = nodeTop;
+        // *** 新增：保存重叠状态 ***
+        _isSelectionOverlapping = isOverlap;
 
         _selectionMenuStyle = $"top: {menuTop}px; left: {left}px; transform: translateX(-50%);";
         _isSelectionMenuVisible = true;

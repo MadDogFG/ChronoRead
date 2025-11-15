@@ -273,6 +273,12 @@
         background-color: #404040;
     }
 
+    .menu-button.disabled {
+        background-color: #262626 !important; /* 保持暗色背景 */
+        opacity: 0.5; /* 变灰 */
+        cursor: not-allowed; /* 显示不可点击光标 */
+    }
+
     .menu-button:not(:last-child) {
         border-right: 1px solid #525252;
     }

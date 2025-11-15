@@ -71,13 +71,14 @@
     },
 
     /**
-     * 3. 初始化划词监听器 (修改版)
+     * 3. 初始化划词监听器 (修改版 - 传递重叠状态)
      */
     initializeSelectionListener: (dotNetHelper, contentContainerId) => {
         const content = document.getElementById(contentContainerId);
         if (!content) { console.error("Selection listener: content container not found."); return; }
 
         content.addEventListener('mouseup', (e) => {
+            // 如果点击的是卡片或菜单，则忽略
             if (e.target.closest('.timeline-card') || e.target.closest('#selection-menu')) {
                 return;
             }
@@ -87,20 +88,36 @@
             if (selectedText.length > 3) {
                 const range = selection.getRangeAt(0);
 
+                // --- 新增：重叠检查 ---
+                let isOverlap = false; // 默认不重叠
+                const existingHighlights = content.querySelectorAll('.chrono-anchor-text');
+                for (let span of existingHighlights) {
+                    if (range.intersectsNode(span)) {
+                        isOverlap = true; // 发现重叠，设置标志
+                        break; // 停止检查
+                    }
+                }
+                // --- 重叠检查结束 ---
+
                 // *** 关键：立即暂存 Range 对象 ***
                 window.ChronoReadInterop._lastSelectionRange = range;
 
                 const rect = range.getBoundingClientRect();
                 const contentRect = content.getBoundingClientRect();
+                // 菜单向上偏移 50px
                 const menuTop = (rect.top - contentRect.top) + window.scrollY - 50;
+                // 锚点/卡片的精确 Y 坐标
                 const nodeTop = (rect.top - contentRect.top) + window.scrollY + 4;
                 const relativeLeft = (rect.left - contentRect.left) + window.scrollX + (rect.width / 2);
 
                 dotNetHelper.invokeMethodAsync(
                     'ShowSelectionMenu',
-                    selectedText, menuTop, relativeLeft,
+                    selectedText,
+                    menuTop,
+                    relativeLeft,
                     range.startContainer.parentElement.id,
-                    nodeTop
+                    nodeTop,
+                    isOverlap // *** 关键：将重叠状态作为第6个参数传递给 C# ***
                 );
             } else {
                 // *** 关键：清除暂存的 Range ***
@@ -110,6 +127,7 @@
         });
 
         document.addEventListener('mousedown', (e) => {
+            // 如果点击的是内容区域或菜单之外的地方
             if (!content.contains(e.target) && !e.target.closest('#selection-menu')) {
                 // *** 关键：点击其他地方也清除暂存的 Range ***
                 window.ChronoReadInterop._lastSelectionRange = null;
